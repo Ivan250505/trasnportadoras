@@ -5,7 +5,7 @@ const { rastrearGuia } = require('../controllers/scrapingController');
 // POST /api/rastrear-guia
 router.post('/', rastrearGuia);
 
-// GET /api/rastrear-guia/:numero
-router.get('/:numero', rastrearGuia);
+// GET /api/rastrear-guia/:transportadora/:numero
+router.get('/:transportadora/:numero', rastrearGuia);
 
 module.exports = router;

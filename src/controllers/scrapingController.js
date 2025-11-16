@@ -1,19 +1,24 @@
 const { pool } = require('../config/database');
-const { rastrearGuiaCopetran } = require('../services/scrapingService');
+const { 
+  rastrearGuiaCopetran, 
+  rastrearGuiaTransmoralar 
+} = require('../services/scrapingService');
 
 /**
- * Rastrear guía de Copetran
+ * Rastrear guía de cualquier transportadora
  */
 async function rastrearGuia(req, res) {
   try {
-    // Mejor extracción del número de guía
+    // Extraer parámetros
+    const transportadora = (req.params.transportadora || req.body.transportadora || 'copetran').toLowerCase();
     const numeroGuia = req.params.numero || req.body.numeroGuia || req.query.numero;
 
     console.log('📦 Parámetros recibidos:', {
+      transportadora,
+      numeroGuia,
       params: req.params,
       body: req.body,
-      query: req.query,
-      numeroGuia
+      query: req.query
     });
 
     if (!numeroGuia) {
@@ -26,10 +31,24 @@ async function rastrearGuia(req, res) {
       });
     }
 
-    // ... resto del código
+    let resultado;
 
-    // Consultar Copetran
-    const resultado = await rastrearGuiaCopetran(numeroGuia);
+    // Seleccionar función según transportadora
+    switch(transportadora) {
+      case 'copetran':
+        resultado = await rastrearGuiaCopetran(numeroGuia);
+        break;
+      
+      case 'transmoralar':
+        resultado = await rastrearGuiaTransmoralar(numeroGuia);
+        break;
+      
+      default:
+        return res.status(400).json({
+          error: 'Transportadora no soportada',
+          transportadorasDisponibles: ['copetran', 'transmoralar']
+        });
+    }
 
     if (!resultado.success) {
       return res.status(resultado.error.includes('no se encontraron') ? 404 : 500).json(resultado);
@@ -44,7 +63,7 @@ async function rastrearGuia(req, res) {
 
       if (pedidos.length > 0) {
         console.log(`📝 Actualizando estado en BD para guía ${numeroGuia}`);
-        // TODO: Parsear HTML y actualizar estados_pedido
+        // TODO: Parsear contenido y actualizar estados_pedido
       }
     } catch (dbError) {
       console.error('Error al actualizar BD:', dbError.message);
