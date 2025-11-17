@@ -1,9 +1,9 @@
 const { pool } = require('../config/database');
 const { 
   rastrearGuiaCopetran, 
-  rastrearGuiaTransmoralar 
+  rastrearGuiaTransmoralar,
+  rastrearGuiaCootransmagdalena // ✅ AGREGAR
 } = require('../services/scrapingService');
-
 /**
  * Rastrear guía de cualquier transportadora
  */
@@ -12,7 +12,10 @@ async function rastrearGuia(req, res) {
     // Extraer parámetros
     const transportadora = (req.params.transportadora || req.body.transportadora || 'copetran').toLowerCase();
     const numeroGuia = req.params.numero || req.body.numeroGuia || req.query.numero;
-
+    // ✅ Limpiar el número de guía (quitar saltos de línea y espacios)
+    if (numeroGuia) {
+      numeroGuia = numeroGuia.toString().trim();
+    }
     console.log('📦 Parámetros recibidos:', {
       transportadora,
       numeroGuia,
