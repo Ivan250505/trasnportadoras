@@ -236,3 +236,9 @@ function extraerDatosTransmoralar(html) {
 
   return datos;
 }
+
+// ⚠️ ESTO ES LO QUE FALTABA - EXPORTAR LAS FUNCIONES
+module.exports = {
+  rastrearGuiaCopetran,
+  rastrearGuiaTransmoralar
+};
