@@ -1,5 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
+const pdfParse = require('pdf-parse');
 const { SCRAPING_TIMEOUT } = require('../config/env');
 
 /**
@@ -113,7 +114,7 @@ async function rastrearGuiaCopetran(numeroGuia) {
 }
 
 /**
- * Consulta el rastreo de una guía en Transmoralar - VERSIÓN COMPLETA
+ * Consulta el rastreo de una guía en Transmoralar - EXTRAE DATOS DEL PDF
  */
 async function rastrearGuiaTransmoralar(numeroGuia) {
   try {
@@ -121,18 +122,18 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
     console.log(`🔍 Consultando guía Transmoralar: ${guiaLimpia}`);
 
     const baseUrl = 'https://transmoralar.softwareparati.com';
-    
-    // Paso 1: Intentar obtener el reporte directamente
     const reportUrl = `${baseUrl}/reporte?nombre=ENC010&P_PEDIDO=${guiaLimpia}`;
     
     console.log(`📡 Consultando URL: ${reportUrl}`);
     
+    // Obtener el PDF como buffer
     const response = await axios.get(reportUrl, {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept': 'application/pdf,text/html,*/*',
         'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
       },
+      responseType: 'arraybuffer', // ⚠️ IMPORTANTE: obtener como buffer
       timeout: SCRAPING_TIMEOUT,
       maxRedirects: 5,
       validateStatus: (status) => status >= 200 && status < 500
@@ -140,10 +141,8 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
 
     console.log(`✅ Respuesta recibida (${response.status})`);
 
-    const htmlContent = response.data || '';
-    
-    if (!htmlContent || htmlContent.length < 100) {
-      console.log('⚠️ Contenido HTML vacío o muy corto');
+    if (!response.data || response.data.length < 100) {
+      console.log('⚠️ Contenido vacío o muy corto');
       return {
         success: false,
         error: 'No se encontraron datos para esta guía',
@@ -152,14 +151,43 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
       };
     }
 
-    // Extraer TODOS los datos con Cheerio
-    const datosCompletos = extraerDatosCompletosTransmoralar(htmlContent, guiaLimpia);
+    // Verificar si es un PDF
+    const buffer = Buffer.from(response.data);
+    const isPDF = buffer.toString('utf8', 0, 5) === '%PDF-';
+
+    console.log(`📄 Tipo de contenido: ${isPDF ? 'PDF' : 'Otro'}`);
+
+    let textContent = '';
+
+    if (isPDF) {
+      // Parsear el PDF y extraer texto
+      console.log('📖 Extrayendo texto del PDF...');
+      const pdfData = await pdfParse(buffer);
+      textContent = pdfData.text;
+      console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
+    } else {
+      // Si no es PDF, intentar como HTML
+      textContent = buffer.toString('utf8');
+    }
+
+    if (!textContent || textContent.length < 50) {
+      console.log('⚠️ Texto extraído vacío');
+      return {
+        success: false,
+        error: 'No se pudo extraer información del documento',
+        numeroGuia: guiaLimpia,
+        transportadora: 'transmoralar'
+      };
+    }
+
+    // Extraer TODOS los datos del texto
+    const datosCompletos = extraerDatosDesdeTextoTransmoralar(textContent, guiaLimpia);
 
     console.log('📊 Datos extraídos:', JSON.stringify(datosCompletos, null, 2));
 
     // Verificar si tiene datos válidos
     if (!datosCompletos.estadoActual || datosCompletos.estadoActual === 'DESCONOCIDO') {
-      console.log('⚠️ No se encontraron datos válidos en el HTML');
+      console.log('⚠️ No se encontraron datos válidos');
       return {
         success: false,
         error: 'No se encontraron datos para esta guía',
@@ -170,10 +198,10 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
 
     return {
       success: true,
-      html: htmlContent,
+      html: textContent, // Enviar el texto extraído como "html"
       numeroGuia: guiaLimpia,
       transportadora: 'transmoralar',
-      tipo: 'html',
+      tipo: 'pdf',
       url: reportUrl,
       datos: datosCompletos
     };
@@ -210,160 +238,166 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
 }
 
 /**
- * Extrae TODOS los datos del HTML de Transmoralar usando Cheerio
+ * Extrae TODOS los datos del texto extraído del PDF de Transmoralar
  */
-function extraerDatosCompletosTransmoralar(html, numeroGuia) {
-  const $ = cheerio.load(html);
-  
+function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
   const datos = {
     numeroGuia: numeroGuia,
-    // Datos del remitente
     remitente: {
       nombre: '',
       origen: '',
       direccion: ''
     },
-    // Datos del destinatario
     destinatario: {
       nombre: '',
       destino: '',
       direccion: '',
       unidad: ''
     },
-    // Estado actual
     estadoActual: '',
-    // Historial completo de estados (timeline)
     historial: [],
-    // Datos adicionales
     fechaCreacion: '',
     horaCreacion: ''
   };
 
   try {
-    // Extraer texto limpio del body
-    const bodyText = $('body').text();
-    const lines = bodyText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+    console.log('🔍 Analizando texto...');
 
-    console.log('📄 Líneas encontradas:', lines.length);
-
-    // Buscar número de guía
-    const guiaMatch = bodyText.match(/(\d{10,})/);
+    // Limpiar el texto
+    const textoLimpio = texto.replace(/\r/g, '').trim();
+    
+    // Extraer número de guía (buscar secuencia de 10+ dígitos)
+    const guiaMatch = textoLimpio.match(/Guia\s*#?\s*(\d{10,})/i) || 
+                      textoLimpio.match(/(\d{10,})/);
     if (guiaMatch) {
       datos.numeroGuia = guiaMatch[1];
+      console.log('✅ Guía encontrada:', datos.numeroGuia);
     }
 
-    // Extraer origen y destino
-    const origenMatch = bodyText.match(/Origen\s*:?\s*([^\n]+)/i);
+    // Extraer ORIGEN (después de "Origen :" hasta el siguiente campo)
+    const origenMatch = textoLimpio.match(/Origen\s*:?\s*([^\n]+)/i);
     if (origenMatch) {
       datos.remitente.origen = origenMatch[1].trim();
+      console.log('✅ Origen:', datos.remitente.origen);
     }
 
-    const destinoMatch = bodyText.match(/Destino\s*:?\s*([^\n]+)/i);
+    // Extraer DESTINO
+    const destinoMatch = textoLimpio.match(/Destino\s*:?\s*([^\n]+)/i);
     if (destinoMatch) {
       datos.destinatario.destino = destinoMatch[1].trim();
+      console.log('✅ Destino:', datos.destinatario.destino);
     }
 
-    // Extraer nombres
-    const nombreRemitenteMatch = bodyText.match(/Nombre\s*:?\s*([^\n]+?)(?=Unidad|Nombre:|$)/i);
-    if (nombreRemitenteMatch) {
-      datos.remitente.nombre = nombreRemitenteMatch[1].trim();
-    }
-
-    // Buscar todos los nombres después de "Datos destinatario"
-    const datosDestinatarioIndex = bodyText.indexOf('Datos destinatario');
-    if (datosDestinatarioIndex > -1) {
-      const despuesDestinatario = bodyText.substring(datosDestinatarioIndex);
-      const nombreDestMatch = despuesDestinatario.match(/Nombre\s*:?\s*([^\n]+)/i);
-      if (nombreDestMatch) {
-        datos.destinatario.nombre = nombreDestMatch[1].trim();
-      }
-    }
-
-    // Extraer unidad
-    const unidadMatch = bodyText.match(/Unidad\s*:?\s*([^\n]+)/i);
+    // Extraer UNIDAD
+    const unidadMatch = textoLimpio.match(/Unidad\s*:?\s*([^\n]+)/i);
     if (unidadMatch) {
       datos.destinatario.unidad = unidadMatch[1].trim();
+      console.log('✅ Unidad:', datos.destinatario.unidad);
     }
 
-    // Extraer ESTADO principal (el más reciente/importante)
-    const estadoMatch = bodyText.match(/ESTADO\s*\n\s*([A-Z\s]+)/);
+    // Extraer nombres (hay dos secciones de "Nombre:")
+    const nombresMatch = textoLimpio.matchAll(/Nombre\s*:?\s*([^\n]+)/gi);
+    const nombres = Array.from(nombresMatch).map(m => m[1].trim());
+    
+    if (nombres.length >= 1) {
+      datos.remitente.nombre = nombres[0];
+      console.log('✅ Remitente:', datos.remitente.nombre);
+    }
+    if (nombres.length >= 2) {
+      datos.destinatario.nombre = nombres[1];
+      console.log('✅ Destinatario:', datos.destinatario.nombre);
+    }
+
+    // Extraer ESTADO principal (buscar después de "ESTADO")
+    const estadoMatch = textoLimpio.match(/ESTADO\s*\n\s*([A-Z\s]+)/);
     if (estadoMatch) {
       datos.estadoActual = estadoMatch[1].trim();
+      console.log('✅ Estado actual:', datos.estadoActual);
     }
 
-    // Extraer HISTORIAL completo de estados con fechas
-    const estadoRegex = /([A-Z\s]{3,})\s*(\d{4}\/\d{2}\/\d{2}\s+\d{2}\.\d{2}\s+(?:AM|PM))/g;
+    // Extraer HISTORIAL completo
+    // Patrón: ESTADO + FECHA (YYYY/MM/DD HH.MM AM/PM) + posibles detalles
+    const historialRegex = /([A-Z][A-Z\s]{5,})\s*(\d{4}\/\d{2}\/\d{2}\s+\d{2}\.\d{2}\s+(?:AM|PM))/g;
     let match;
     
-    while ((match = estadoRegex.exec(bodyText)) !== null) {
+    while ((match = historialRegex.exec(textoLimpio)) !== null) {
       const estado = match[1].trim();
       const fecha = match[2].trim();
       
-      // Filtrar estados válidos (no palabras sueltas)
-      if (estado.length > 3 && !estado.includes('TRANSMORALAR')) {
+      // Filtrar estados válidos
+      if (estado.length > 5 && !estado.includes('TRANSMORALAR')) {
         datos.historial.push({
           estado: estado,
           fecha: fecha,
           detalles: ''
         });
+        console.log(`📝 Estado añadido: ${estado} - ${fecha}`);
       }
     }
 
-    // Extraer detalles adicionales de cada estado (nombres de conductores, vehículos, etc)
-    const detallesRegex = /([A-Z\s]{10,})\s*\n\s*([A-Z\s]+(?:[A-Z]+\s*)+)/g;
-    let detalleMatch;
-    let detalleIndex = 0;
+    // Buscar detalles adicionales (nombres, placas, bodegas)
+    // Estos suelen aparecer en líneas después de cada estado
+    const lineas = textoLimpio.split('\n').filter(l => l.trim().length > 0);
     
-    while ((detalleMatch = detallesRegex.exec(bodyText)) !== null && detalleIndex < datos.historial.length) {
-      const detalle = detalleMatch[2].trim();
-      if (detalle && detalle.length > 3) {
-        datos.historial[detalleIndex].detalles = detalle;
-        detalleIndex++;
-      }
-    }
-
-    // Buscar vehículos (placas)
-    const vehiculoMatches = bodyText.matchAll(/([A-Z]{3}\d{3})/g);
-    let vehiculoIndex = 0;
-    for (const vehiculoMatch of vehiculoMatches) {
-      if (vehiculoIndex < datos.historial.length) {
-        if (datos.historial[vehiculoIndex].detalles) {
-          datos.historial[vehiculoIndex].detalles += ` - Vehículo: ${vehiculoMatch[1]}`;
-        } else {
-          datos.historial[vehiculoIndex].detalles = `Vehículo: ${vehiculoMatch[1]}`;
+    for (let i = 0; i < lineas.length && i < datos.historial.length * 3; i++) {
+      const linea = lineas[i].trim();
+      
+      // Buscar nombres de personas (generalmente en MAYÚSCULAS)
+      if (/^[A-Z\s]{10,}$/.test(linea) && !linea.includes('ESTADO')) {
+        // Asignar a historial si hay espacio
+        const indexHistorial = Math.floor(i / 3);
+        if (indexHistorial < datos.historial.length) {
+          if (!datos.historial[indexHistorial].detalles) {
+            datos.historial[indexHistorial].detalles = linea;
+          }
         }
-        vehiculoIndex++;
+      }
+      
+      // Buscar placas de vehículos (XXX000)
+      const placaMatch = linea.match(/([A-Z]{3}\d{3})/);
+      if (placaMatch) {
+        const indexHistorial = Math.floor(i / 3);
+        if (indexHistorial < datos.historial.length) {
+          if (datos.historial[indexHistorial].detalles) {
+            datos.historial[indexHistorial].detalles += ` - ${placaMatch[1]}`;
+          } else {
+            datos.historial[indexHistorial].detalles = `Vehículo: ${placaMatch[1]}`;
+          }
+        }
       }
     }
 
-    // Si encontramos historial, el estado actual es el último
+    // Si hay historial, el último estado es el actual
     if (datos.historial.length > 0) {
       const ultimoEstado = datos.historial[datos.historial.length - 1];
       datos.estadoActual = ultimoEstado.estado;
       datos.fechaCreacion = ultimoEstado.fecha;
+      console.log(`✅ ${datos.historial.length} estados en el historial`);
     }
 
-    // Si no se encontró estado, buscar más agresivamente
+    // Si no se encontró estado, buscar palabras clave
     if (!datos.estadoActual || datos.estadoActual === '') {
       const estadosComunes = [
-        'ENTREGADA', 'EN TRANSPORTE', 'EN BODEGA', 'DIGITADA',
-        'CARGADA EN VEHICULO', 'EN TRANSPORTE URBANO', 'EN TRANSPORTE NACIONAL'
+        'ENTREGADA', 'ENTREGADA SIN CUMPLIDO', 'EN TRANSPORTE', 'EN BODEGA', 
+        'DIGITADA', 'CARGADA EN VEHICULO', 'EN TRANSPORTE URBANO', 
+        'EN TRANSPORTE NACIONAL'
       ];
       
       for (const estadoComun of estadosComunes) {
-        if (bodyText.includes(estadoComun)) {
+        if (textoLimpio.includes(estadoComun)) {
           datos.estadoActual = estadoComun;
+          console.log('✅ Estado encontrado por búsqueda:', estadoComun);
           break;
         }
       }
     }
 
-    // Fallback: si aún no hay estado pero hay contenido
-    if ((!datos.estadoActual || datos.estadoActual === '') && bodyText.length > 200) {
+    // Fallback final
+    if (!datos.estadoActual || datos.estadoActual === '') {
       datos.estadoActual = 'CONSULTADO';
     }
 
-    console.log('✅ Datos estructurados:', {
+    console.log('✅ Extracción completada:', {
       tieneEstado: !!datos.estadoActual,
       cantidadHistorial: datos.historial.length,
       tieneRemitente: !!datos.remitente.nombre,
