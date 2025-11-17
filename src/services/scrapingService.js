@@ -1,6 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const pdfParse = require('pdf-parse');
+const pdf = require('pdf-parse'); // Importación corregida
 const { SCRAPING_TIMEOUT } = require('../config/env');
 
 /**
@@ -162,7 +162,7 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
     if (isPDF) {
       // Parsear el PDF y extraer texto
       console.log('📖 Extrayendo texto del PDF...');
-      const pdfData = await pdfParse(buffer);
+      const pdfData = await pdf(buffer); // Llamada corregida
       textContent = pdfData.text;
       console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
     } else {
