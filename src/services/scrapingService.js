@@ -626,21 +626,22 @@ function extraerDatosDesdeTextoCootransmagdalena(texto, numeroGuia) {
     const textoLimpio = texto.replace(/\r/g, '').trim();
     
     // Extraer FECHA
-    const fechaMatch = textoLimpio.match(/FECHA\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i);
+    const fechaMatch = textoLimpio.match(/FECHA\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i);
     if (fechaMatch) {
       datos.fecha = fechaMatch[1];
       console.log('✅ Fecha:', datos.fecha);
     }
 
     // Extraer NUMERO GUIA
-    const guiaMatch = textoLimpio.match(/NUMERO\s+GUIA\s+([A-Z]+-\d+)/i);
+    const guiaMatch = textoLimpio.match(/NUMERO\s+GUIA\s*([A-Z]+-\d+)/i) || 
+                      textoLimpio.match(/GUIA\s*([A-Z]+-\d+)/i);
     if (guiaMatch) {
       datos.numeroGuia = guiaMatch[1];
       console.log('✅ Guía confirmada:', datos.numeroGuia);
     }
 
     // Extraer ORIGEN / DESTINO
-    const origenDestinoMatch = textoLimpio.match(/ORIGEN\s*\/\s*DESTINO\s+([A-Z\s]+)\s*\/\s*([A-Z\s]+)/i);
+    const origenDestinoMatch = textoLimpio.match(/ORIGEN\s*\/\s*DESTINO\s*([A-Z\s]+?)\s*\/\s*([A-Z\s]+?)(?=\n|AGENCIA)/i);
     if (origenDestinoMatch) {
       datos.origen = origenDestinoMatch[1].trim();
       datos.destino = origenDestinoMatch[2].trim();
@@ -649,54 +650,92 @@ function extraerDatosDesdeTextoCootransmagdalena(texto, numeroGuia) {
     }
 
     // Extraer AGENCIA DESTINO
-    const agenciaMatch = textoLimpio.match(/AGENCIA\s+DESTINO\s+([A-Z\s]+)/i);
+    const agenciaMatch = textoLimpio.match(/AGENCIA\s+DESTINO\s*([A-Z\s]+?)(?=\n|TIPO)/i);
     if (agenciaMatch) {
       datos.agenciaDestino = agenciaMatch[1].trim();
       console.log('✅ Agencia destino:', datos.agenciaDestino);
     }
 
     // Extraer TIPO
-    const tipoMatch = textoLimpio.match(/TIPO\s+([A-Z\s]+)/i);
+    const tipoMatch = textoLimpio.match(/TIPO\s*([A-Z\s]+?)(?=\n|FORMA)/i);
     if (tipoMatch) {
       datos.tipo = tipoMatch[1].trim();
     }
 
     // Extraer FORMA PAGO
-    const pagoMatch = textoLimpio.match(/FORMA\s+PAGO\s+([A-Z\s]+)/i);
+    const pagoMatch = textoLimpio.match(/FORMA\s+PAGO\s*([A-Z\s]+?)(?=\n|CONTIENE)/i);
     if (pagoMatch) {
       datos.formaPago = pagoMatch[1].trim();
     }
 
     // Extraer CONTIENE
-    const contieneMatch = textoLimpio.match(/CONTIENE\s+(.+?)(?=VALOR|$)/is);
+    const contieneMatch = textoLimpio.match(/CONTIENE\s*(.+?)(?=VALOR|\.{5,})/is);
     if (contieneMatch) {
       datos.contiene = contieneMatch[1].replace(/\n/g, ' ').trim();
     }
 
     // Extraer VALOR ASEGURADO
-    const valorMatch = textoLimpio.match(/VALOR\s+ASEGURADO\s+\$?([\d,]+)/i);
+    const valorMatch = textoLimpio.match(/VALOR\s+ASEGURADO\s*\$?\s*([\d,]+)/i);
     if (valorMatch) {
       datos.valorAsegurado = valorMatch[1];
     }
 
-    // Extraer REMITENTE
-    const remitenteMatch = textoLimpio.match(/REMITENTE[^\n]*\n+NOMBRE\s+(.+?)\n+C\.C\s+(\d+)\s+TELEFONO\s+(\d+)\n+DIR\.\s+(.+?)(?=\n-)/is);
+    // ✅ EXTRAER REMITENTE - Corregido para formato sin espacios
+    // Formato: NOMBREUNION DE DROGUISTAS\nS.A.\nC.C1128486839TELEFONO3166901989\nDIR.CRA 18 31 82
+    const remitenteMatch = textoLimpio.match(/REMITENTE[^\n]*\n+NOMBRE\s*(.+?)(?=\nC\.C|C\.C)/is);
     if (remitenteMatch) {
-      datos.remitente.nombre = remitenteMatch[1].trim();
-      datos.remitente.cedula = remitenteMatch[2].trim();
-      datos.remitente.telefono = remitenteMatch[3].trim();
-      datos.remitente.direccion = remitenteMatch[4].trim();
-      console.log('✅ Remitente:', datos.remitente.nombre);
+      datos.remitente.nombre = remitenteMatch[1].replace(/\n/g, ' ').trim();
+      console.log('✅ Remitente nombre encontrado:', datos.remitente.nombre);
     }
 
-    // Extraer DESTINATARIO
-    const destinatarioMatch = textoLimpio.match(/DESTINATARIO[^\n]*\n+NOMBRE\s+(.+?)\n+C\.C\s+(\d+)\s+TELEFONO\s+(\d+)\n+DIR\.\s+(.+?)(?=\n\.|\n-)/is);
+    // Extraer CC del remitente
+    const remitenteCCMatch = textoLimpio.match(/REMITENTE.*?C\.C\s*(\d+)/is);
+    if (remitenteCCMatch) {
+      datos.remitente.cedula = remitenteCCMatch[1];
+      console.log('✅ Remitente CC:', datos.remitente.cedula);
+    }
+
+    // Extraer teléfono del remitente
+    const remitenteTelMatch = textoLimpio.match(/REMITENTE.*?TELEFONO\s*(\d+)/is);
+    if (remitenteTelMatch) {
+      datos.remitente.telefono = remitenteTelMatch[1];
+      console.log('✅ Remitente teléfono:', datos.remitente.telefono);
+    }
+
+    // Extraer dirección del remitente
+    const remitenteDirMatch = textoLimpio.match(/REMITENTE.*?DIR\.\s*(.+?)(?=\n-|-\s*DESTINATARIO)/is);
+    if (remitenteDirMatch) {
+      datos.remitente.direccion = remitenteDirMatch[1].replace(/\n/g, ' ').trim();
+      console.log('✅ Remitente dirección:', datos.remitente.direccion);
+    }
+
+    // ✅ EXTRAER DESTINATARIO - Corregido para formato sin espacios
+    // Formato: NOMBREDROGUERIA SUPER\nALEMANA DANEY\nC.C1129178266TELEFONO3115601403\nDIR.CR 2 4 100 BRR CENTRO
+    const destinatarioMatch = textoLimpio.match(/DESTINATARIO[^\n]*\n+NOMBRE\s*(.+?)(?=\nC\.C|C\.C)/is);
     if (destinatarioMatch) {
-      datos.destinatario.nombre = destinatarioMatch[1].trim();
-      datos.destinatario.cedula = destinatarioMatch[2].trim();
-      datos.destinatario.telefono = destinatarioMatch[3].trim();
-      datos.destinatario.direccion = destinatarioMatch[4].trim();
-      console.log('✅ Destinatario:', datos.destinatario.nombre);
+      datos.destinatario.nombre = destinatarioMatch[1].replace(/\n/g, ' ').trim();
+      console.log('✅ Destinatario nombre encontrado:', datos.destinatario.nombre);
+    }
+
+    // Extraer CC del destinatario
+    const destinatarioCCMatch = textoLimpio.match(/DESTINATARIO.*?C\.C\s*(\d+)/is);
+    if (destinatarioCCMatch) {
+      datos.destinatario.cedula = destinatarioCCMatch[1];
+      console.log('✅ Destinatario CC:', datos.destinatario.cedula);
+    }
+
+    // Extraer teléfono del destinatario
+    const destinatarioTelMatch = textoLimpio.match(/DESTINATARIO.*?TELEFONO\s*(\d+)/is);
+    if (destinatarioTelMatch) {
+      datos.destinatario.telefono = destinatarioTelMatch[1];
+      console.log('✅ Destinatario teléfono:', datos.destinatario.telefono);
+    }
+
+    // Extraer dirección del destinatario
+    const destinatarioDirMatch = textoLimpio.match(/DESTINATARIO.*?DIR\.\s*(.+?)(?=\n\.{5,}|TRAZABILIDAD)/is);
+    if (destinatarioDirMatch) {
+      datos.destinatario.direccion = destinatarioDirMatch[1].replace(/\n/g, ' ').trim();
+      console.log('✅ Destinatario dirección:', datos.destinatario.direccion);
     }
 
     // Extraer TRAZABILIDAD (historial)
