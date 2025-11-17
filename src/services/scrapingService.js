@@ -249,15 +249,146 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
 }
 
 /** */
+
+/**
+ * Extrae TODOS los datos del texto extraído del PDF de Transmoralar - CORREGIDO
+ */
+function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
+  const datos = {
+    numeroGuia: numeroGuia,
+    remitente: {
+      nombre: '',
+      origen: '',
+      direccion: ''
+    },
+    destinatario: {
+      nombre: '',
+      destino: '',
+      direccion: '',
+      unidad: ''
+    },
+    estadoActual: '',
+    historial: [],
+    fechaCreacion: '',
+    horaCreacion: ''
+  };
+
+  try {
+    console.log('🔍 Analizando texto Transmoralar...');
+
+    const textoLimpio = texto.replace(/\r/g, '').trim();
+    
+    // ✅ Extraer NÚMERO DE GUÍA
+    const guiaMatch = textoLimpio.match(/Guia\s*#\s*(\d{10,})/i) || 
+                      textoLimpio.match(/^(\d{10,})/m);
+    if (guiaMatch) {
+      datos.numeroGuia = guiaMatch[1];
+      console.log('✅ Guía encontrada:', datos.numeroGuia);
+    }
+
+    // ✅ Extraer REMITENTE - Nombre (después de "Datos remitente" y "Nombre:")
+    const remitenteNombreMatch = textoLimpio.match(/Datos\s+remitente.*?Nombre:\s*([^\n]+)/is);
+    if (remitenteNombreMatch) {
+      datos.remitente.nombre = remitenteNombreMatch[1].trim();
+      console.log('✅ Remitente nombre:', datos.remitente.nombre);
+    }
+
+    // ✅ Extraer ORIGEN (después de "Origen :" hasta el siguiente campo)
+    const origenMatch = textoLimpio.match(/Origen\s*:\s*([^\n]+?)(?=Destino:|Unidad:|Nombre:|$)/is);
+    if (origenMatch) {
+      datos.remitente.origen = origenMatch[1].trim();
+      console.log('✅ Origen:', datos.remitente.origen);
+    }
+
+    // ✅ Extraer DESTINATARIO - Nombre (después de "Datos destinatario" y "Nombre:")
+    const destinatarioNombreMatch = textoLimpio.match(/Datos\s+destinatario.*?Nombre:\s*([^\n]+)/is);
+    if (destinatarioNombreMatch) {
+      datos.destinatario.nombre = destinatarioNombreMatch[1].trim();
+      console.log('✅ Destinatario nombre:', datos.destinatario.nombre);
+    }
+
+    // ✅ Extraer DESTINO
+    const destinoMatch = textoLimpio.match(/Destino\s*:\s*([^\n]+?)(?=Unidad:|Nombre:|$)/is);
+    if (destinoMatch) {
+      datos.destinatario.destino = destinoMatch[1].trim();
+      console.log('✅ Destino:', datos.destinatario.destino);
+    }
+
+    // ✅ Extraer UNIDAD
+    const unidadMatch = textoLimpio.match(/Unidad\s*:\s*([^\n]+?)(?=Nombre:|$)/is);
+    if (unidadMatch) {
+      datos.destinatario.unidad = unidadMatch[1].trim();
+      console.log('✅ Unidad:', datos.destinatario.unidad);
+    }
+
+    // ✅ Extraer HISTORIAL completo
+    // Patrón mejorado: ESTADO seguido de FECHA (YYYY/MM/DD HH.MM AM/PM)
+    const historialRegex = /^([A-Z][A-Z\s]{8,}?)\s*(\d{4}\/\d{2}\/\d{2}\s+\d{2}\.\d{2}\s+(?:AM|PM))/gm;
+    let match;
+    const historialRaw = [];
+    
+    while ((match = historialRegex.exec(textoLimpio)) !== null) {
+      const estado = match[1].trim();
+      const fecha = match[2].trim();
+      
+      // Filtrar estados válidos (evitar duplicados y basura)
+      if (estado.length >= 7 && 
+          !estado.includes('TRANSMORALAR') && 
+          !estado.includes('DATOS') &&
+          !estado.includes('Click')) {
+        historialRaw.push({
+          estado: estado,
+          fecha: fecha,
+          detalles: ''
+        });
+        console.log(`📝 Estado detectado: ${estado} - ${fecha}`);
+      }
+    }
+
+    // ✅ ORGANIZAR HISTORIAL - Solo etapas importantes
+    datos.historial = organizarEstadosTransmoralar(historialRaw);
+
+    // ✅ El último estado es el actual
+    if (datos.historial.length > 0) {
+      const ultimoEstado = datos.historial[datos.historial.length - 1];
+      datos.estadoActual = ultimoEstado.estado;
+      datos.fechaCreacion = ultimoEstado.fecha;
+      
+      // Agregar información adicional al estado actual
+      datos.estadoActualIcono = obtenerIconoEstado(ultimoEstado.estado);
+      datos.estadoActualDescripcion = obtenerDescripcionEstado(ultimoEstado.estado);
+      console.log(`✅ Estado actual: ${datos.estadoActual}`);
+    }
+
+    // Fallback si no hay historial
+    if (!datos.estadoActual || datos.estadoActual === '') {
+      datos.estadoActual = 'CONSULTADO';
+    }
+
+    console.log('✅ Extracción completada:', {
+      tieneEstado: !!datos.estadoActual,
+      cantidadHistorial: datos.historial.length,
+      tieneRemitente: !!datos.remitente.nombre,
+      tieneDestinatario: !!datos.destinatario.nombre
+    });
+
+  } catch (error) {
+    console.error('❌ Error al extraer datos:', error.message);
+    datos.estadoActual = 'ERROR EN EXTRACCIÓN';
+  }
+
+  return datos;
+}
+
+/**
+ * Organiza estados de Transmoralar - CORREGIDO
+ */
 function organizarEstadosTransmoralar(historial) {
-  // Etapas importantes en el orden del proceso de envío
+  // ✅ Solo las etapas FINALES importantes
   const etapasImportantes = [
     'DIGITADA',
     'EN BODEGA',
-    'CARGADA EN VEHICULO',
     'EN TRANSPORTE NACIONAL',
-    'GIRON BODEGA', // Bodega destino
-    'EN TRANSPORTE URBANO',
     'ENTREGADA',
     'ENTREGADA SIN CUMPLIDO'
   ];
@@ -266,26 +397,55 @@ function organizarEstadosTransmoralar(historial) {
   const normalizarEstado = (estado) => {
     const estadoUpper = estado.toUpperCase().trim();
     
-    // Mapear variaciones al nombre estándar
-    // ✅ IMPORTANTE: Verificar "SIN CÑUMPLIDO" ANTES de solo "ENTREGADA"
-    if (estadoUpper.includes('DIGIT')) return 'DIGITADA';
-    if (estadoUpper.includes('BODEGA') && estadoUpper.includes('GIRON')) return 'GIRON BODEGA';
-    if (estadoUpper.includes('BODEGA')) return 'EN BODEGA';
-    if (estadoUpper.includes('CARGADA') && estadoUpper.includes('VEHICULO')) return 'CARGADA EN VEHICULO';
-    if (estadoUpper.includes('TRANSPORTE NACIONAL')) return 'EN TRANSPORTE NACIONAL';
-    if (estadoUpper.includes('TRANSPORTE URBANO')) return 'EN TRANSPORTE URBANO';
-    if (estadoUpper.includes('SIN CUMPLIDO') || estadoUpper.includes('ENTREGADA SIN CUMPLIDO')) return 'ENTREGADA SIN CUMPLIDO'; // ✅ PRIMERO
-    if (estadoUpper.includes('ENTREGADA')) return 'ENTREGADA'; // ✅ DESPUÉS
+    // ✅ Orden correcto: verificar "SIN CUMPLIDO" ANTES que "ENTREGADA"
+    if (estadoUpper.includes('ENTREGADA SIN CUMPLIDO') || estadoUpper.includes('SIN CUMPLIDO')) {
+      return 'ENTREGADA SIN CUMPLIDO';
+    }
+    if (estadoUpper.includes('ENTREGADA')) {
+      return 'ENTREGADA';
+    }
+    if (estadoUpper.includes('DIGIT')) {
+      return 'DIGITADA';
+    }
+    if (estadoUpper.includes('TRANSPORTE NACIONAL')) {
+      return 'EN TRANSPORTE NACIONAL';
+    }
+    // ✅ Normalizar todas las bodegas a "EN BODEGA"
+    if (estadoUpper.includes('BODEGA')) {
+      return 'EN BODEGA';
+    }
     
     return estadoUpper;
   };
 
-  // Filtrar y organizar historial
   const historialFiltrado = [];
   const estadosVistos = new Set();
+  let ultimaBodegaFecha = null;
 
   for (const item of historial) {
     const estadoNormalizado = normalizarEstado(item.estado);
+    
+    // ✅ Caso especial: Solo mostrar la ÚLTIMA bodega antes de transporte/entrega
+    if (estadoNormalizado === 'EN BODEGA') {
+      // Guardar pero no agregar todavía
+      ultimaBodegaFecha = item.fecha;
+      continue;
+    }
+    
+    // Si llega transporte nacional o entregada, agregar la última bodega primero
+    if ((estadoNormalizado === 'EN TRANSPORTE NACIONAL' || 
+         estadoNormalizado === 'ENTREGADA' || 
+         estadoNormalizado === 'ENTREGADA SIN CUMPLIDO') && 
+        ultimaBodegaFecha && 
+        !estadosVistos.has('EN BODEGA')) {
+      historialFiltrado.push({
+        estado: 'EN BODEGA',
+        fecha: ultimaBodegaFecha,
+        detalles: ''
+      });
+      estadosVistos.add('EN BODEGA');
+      ultimaBodegaFecha = null;
+    }
     
     // Solo agregar si es una etapa importante y no se ha visto antes
     if (etapasImportantes.includes(estadoNormalizado) && !estadosVistos.has(estadoNormalizado)) {
@@ -295,7 +455,17 @@ function organizarEstadosTransmoralar(historial) {
         detalles: item.detalles || ''
       });
       estadosVistos.add(estadoNormalizado);
+      console.log(`✅ Estado añadido al historial: ${estadoNormalizado}`);
     }
+  }
+
+  // Si quedó una bodega al final sin agregar
+  if (ultimaBodegaFecha && !estadosVistos.has('EN BODEGA')) {
+    historialFiltrado.push({
+      estado: 'EN BODEGA',
+      fecha: ultimaBodegaFecha,
+      detalles: ''
+    });
   }
 
   return historialFiltrado;
@@ -303,14 +473,12 @@ function organizarEstadosTransmoralar(historial) {
 /**
  * Obtiene un ícono representativo para cada estado
  */
+
 function obtenerIconoEstado(estado) {
   const iconos = {
     'DIGITADA': '📝',
     'EN BODEGA': '📦',
-    'CARGADA EN VEHICULO': '🚛',
     'EN TRANSPORTE NACIONAL': '🚚',
-    'GIRON BODEGA': '🏢',
-    'EN TRANSPORTE URBANO': '🚐',
     'ENTREGADA': '✅',
     'ENTREGADA SIN CUMPLIDO': '📦✓'
   };
@@ -324,18 +492,14 @@ function obtenerIconoEstado(estado) {
 function obtenerDescripcionEstado(estado) {
   const descripciones = {
     'DIGITADA': 'Pedido registrado en el sistema',
-    'EN BODEGA': 'En bodega de origen',
-    'CARGADA EN VEHICULO': 'Cargada para transporte',
+    'EN BODEGA': 'En bodega',
     'EN TRANSPORTE NACIONAL': 'En ruta hacia destino',
-    'GIRON BODEGA': 'Llegó a bodega de destino',
-    'EN TRANSPORTE URBANO': 'En reparto local',
     'ENTREGADA': 'Entregada exitosamente',
     'ENTREGADA SIN CUMPLIDO': 'Entregada sin firma'
   };
   
   return descripciones[estado] || estado;
 }
-
 /**
  * Agrega esta función DENTRO de tu scrapingService.js
  * ANTES de la función extraerDatosDesdeTextoTransmoralar
@@ -362,62 +526,81 @@ function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
   };
 
   try {
-    console.log('🔍 Analizando texto...');
+    console.log('🔍 Analizando texto Transmoralar...');
 
     const textoLimpio = texto.replace(/\r/g, '').trim();
     
-    // [... código de extracción existente ...]
-    
-    // Extraer ORIGEN
-    const origenMatch = textoLimpio.match(/Origen\s*:?\s*([^\n]+)/i);
+    // ✅ Extraer NÚMERO DE GUÍA
+    const guiaMatch = textoLimpio.match(/Guia\s*#\s*(\d{10,})/i) || 
+                      textoLimpio.match(/^(\d{10,})/m);
+    if (guiaMatch) {
+      datos.numeroGuia = guiaMatch[1];
+      console.log('✅ Guía encontrada:', datos.numeroGuia);
+    }
+
+    // ✅ Extraer REMITENTE - Nombre (después de "Datos remitente" y "Nombre:")
+    const remitenteNombreMatch = textoLimpio.match(/Datos\s+remitente.*?Nombre:\s*([^\n]+)/is);
+    if (remitenteNombreMatch) {
+      datos.remitente.nombre = remitenteNombreMatch[1].trim();
+      console.log('✅ Remitente nombre:', datos.remitente.nombre);
+    }
+
+    // ✅ Extraer ORIGEN (después de "Origen :" hasta el siguiente campo)
+    const origenMatch = textoLimpio.match(/Origen\s*:\s*([^\n]+?)(?=Destino:|Unidad:|Nombre:|$)/is);
     if (origenMatch) {
       datos.remitente.origen = origenMatch[1].trim();
+      console.log('✅ Origen:', datos.remitente.origen);
     }
 
-    // Extraer DESTINO
-    const destinoMatch = textoLimpio.match(/Destino\s*:?\s*([^\n]+)/i);
+    // ✅ Extraer DESTINATARIO - Nombre (después de "Datos destinatario" y "Nombre:")
+    const destinatarioNombreMatch = textoLimpio.match(/Datos\s+destinatario.*?Nombre:\s*([^\n]+)/is);
+    if (destinatarioNombreMatch) {
+      datos.destinatario.nombre = destinatarioNombreMatch[1].trim();
+      console.log('✅ Destinatario nombre:', datos.destinatario.nombre);
+    }
+
+    // ✅ Extraer DESTINO
+    const destinoMatch = textoLimpio.match(/Destino\s*:\s*([^\n]+?)(?=Unidad:|Nombre:|$)/is);
     if (destinoMatch) {
       datos.destinatario.destino = destinoMatch[1].trim();
+      console.log('✅ Destino:', datos.destinatario.destino);
     }
 
-    // Extraer UNIDAD
-    const unidadMatch = textoLimpio.match(/Unidad\s*:?\s*([^\n]+)/i);
+    // ✅ Extraer UNIDAD
+    const unidadMatch = textoLimpio.match(/Unidad\s*:\s*([^\n]+?)(?=Nombre:|$)/is);
     if (unidadMatch) {
       datos.destinatario.unidad = unidadMatch[1].trim();
+      console.log('✅ Unidad:', datos.destinatario.unidad);
     }
 
-    // Extraer nombres
-    const nombresMatch = textoLimpio.matchAll(/Nombre\s*:?\s*([^\n]+)/gi);
-    const nombres = Array.from(nombresMatch).map(m => m[1].trim());
-    
-    if (nombres.length >= 1) {
-      datos.remitente.nombre = nombres[0];
-    }
-    if (nombres.length >= 2) {
-      datos.destinatario.nombre = nombres[1];
-    }
-
-    // Extraer HISTORIAL completo
-    const historialRegex = /([A-Z][A-Z\s]{5,})\s*(\d{4}\/\d{2}\/\d{2}\s+\d{2}\.\d{2}\s+(?:AM|PM))/g;
+    // ✅ Extraer HISTORIAL completo
+    // Patrón mejorado: ESTADO seguido de FECHA (YYYY/MM/DD HH.MM AM/PM)
+    const historialRegex = /^([A-Z][A-Z\s]{8,}?)\s*(\d{4}\/\d{2}\/\d{2}\s+\d{2}\.\d{2}\s+(?:AM|PM))/gm;
     let match;
+    const historialRaw = [];
     
     while ((match = historialRegex.exec(textoLimpio)) !== null) {
       const estado = match[1].trim();
       const fecha = match[2].trim();
       
-      if (estado.length > 5 && !estado.includes('TRANSMORALAR')) {
-        datos.historial.push({
+      // Filtrar estados válidos (evitar duplicados y basura)
+      if (estado.length >= 7 && 
+          !estado.includes('TRANSMORALAR') && 
+          !estado.includes('DATOS') &&
+          !estado.includes('Click')) {
+        historialRaw.push({
           estado: estado,
           fecha: fecha,
           detalles: ''
         });
+        console.log(`📝 Estado detectado: ${estado} - ${fecha}`);
       }
     }
 
-    // ✅ ORGANIZAR HISTORIAL - Solo mostrar etapas importantes
-    datos.historial = organizarEstadosTransmoralar(datos.historial);
+    // ✅ ORGANIZAR HISTORIAL - Solo etapas importantes
+    datos.historial = organizarEstadosTransmoralar(historialRaw);
 
-    // El último estado es el actual
+    // ✅ El último estado es el actual
     if (datos.historial.length > 0) {
       const ultimoEstado = datos.historial[datos.historial.length - 1];
       datos.estadoActual = ultimoEstado.estado;
@@ -426,6 +609,7 @@ function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
       // Agregar información adicional al estado actual
       datos.estadoActualIcono = obtenerIconoEstado(ultimoEstado.estado);
       datos.estadoActualDescripcion = obtenerDescripcionEstado(ultimoEstado.estado);
+      console.log(`✅ Estado actual: ${datos.estadoActual}`);
     }
 
     // Fallback si no hay historial
