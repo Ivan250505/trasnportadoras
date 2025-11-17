@@ -1,15 +1,6 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-// Importación robusta de pdf-parse
-let pdfParse;
-try {
-  pdfParse = require('pdf-parse');
-  if (typeof pdfParse !== 'function' && pdfParse.default) {
-    pdfParse = pdfParse.default;
-  }
-} catch (err) {
-  console.error('Error al importar pdf-parse:', err);
-}
+const pdfParse = require('pdf-parse'); // ✅ Importación simple y directa
 const { SCRAPING_TIMEOUT } = require('../config/env');
 
 /**
@@ -142,7 +133,7 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
         'Accept': 'application/pdf,text/html,*/*',
         'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
       },
-      responseType: 'arraybuffer', // ⚠️ IMPORTANTE: obtener como buffer
+      responseType: 'arraybuffer',
       timeout: SCRAPING_TIMEOUT,
       maxRedirects: 5,
       validateStatus: (status) => status >= 200 && status < 500
@@ -169,11 +160,22 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
     let textContent = '';
 
     if (isPDF) {
-      // Parsear el PDF y extraer texto
       console.log('📖 Extrayendo texto del PDF...');
-      const pdfData = await pdfParse(buffer); // Usar pdfParse
-      textContent = pdfData.text;
-      console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
+      
+      try {
+        const pdfData = await pdfParse(buffer);
+        textContent = pdfData.text;
+        console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
+      } catch (pdfError) {
+        console.error('❌ Error al parsear PDF:', pdfError);
+        return {
+          success: false,
+          error: 'Error al extraer información del PDF',
+          numeroGuia: guiaLimpia,
+          transportadora: 'transmoralar',
+          details: pdfError.message
+        };
+      }
     } else {
       // Si no es PDF, intentar como HTML
       textContent = buffer.toString('utf8');
@@ -207,7 +209,7 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
 
     return {
       success: true,
-      html: textContent, // Enviar el texto extraído como "html"
+      html: textContent,
       numeroGuia: guiaLimpia,
       transportadora: 'transmoralar',
       tipo: 'pdf',
