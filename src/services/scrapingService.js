@@ -447,12 +447,407 @@ function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
 
   return datos;
 }
+async function rastrearGuiaCootransmagdalena(numeroGuia) {
+  try {
+    const guiaLimpia = numeroGuia.toString().trim();
+    console.log(`🔍 Consultando guía Cootransmagdalena: ${guiaLimpia}`);
+
+    // Separar prefijo y número si viene con guion
+    let prefijo = 'RBPR'; // Prefijo por defecto
+    let numero = guiaLimpia;
+
+    if (guiaLimpia.includes('-')) {
+      const partes = guiaLimpia.split('-');
+      prefijo = partes[0];
+      numero = partes[1];
+    }
+
+    const baseUrl = 'https://silogcootransmagdalenaerp.serviciosproductivos.com.co';
+    const reportUrl = `${baseUrl}/operacion_transporte/rep.guia_web.php?txtPrefijoGuia=${prefijo}&txtNroGuia=${numero}`;
+    
+    console.log(`📡 Consultando URL: ${reportUrl}`);
+    
+    // Obtener el PDF como buffer
+    const response = await axios.get(reportUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/pdf,text/html,*/*',
+        'Accept-Language': 'es-CO,es;q=0.9,en;q=0.8',
+        'Referer': 'https://cootransmagdalena.com.co/'
+      },
+      responseType: 'arraybuffer',
+      timeout: SCRAPING_TIMEOUT,
+      maxRedirects: 5,
+      validateStatus: (status) => status >= 200 && status < 500
+    });
+
+    console.log(`✅ Respuesta recibida (${response.status})`);
+
+    if (!response.data || response.data.length < 100) {
+      console.log('⚠️ Contenido vacío o muy corto');
+      return {
+        success: false,
+        error: 'No se encontraron datos para esta guía',
+        numeroGuia: `${prefijo}-${numero}`,
+        transportadora: 'cootransmagdalena'
+      };
+    }
+
+    // Verificar si es un PDF
+    const buffer = Buffer.from(response.data);
+    const isPDF = buffer.toString('utf8', 0, 5) === '%PDF-';
+
+    console.log(`📄 Tipo de contenido: ${isPDF ? 'PDF' : 'Otro'}`);
+
+    let textContent = '';
+
+    if (isPDF) {
+      console.log('📖 Extrayendo texto del PDF...');
+      
+      try {
+        const pdfData = await pdfParse(buffer);
+        textContent = pdfData.text;
+        console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
+      } catch (pdfError) {
+        console.error('❌ Error al parsear PDF:', pdfError);
+        return {
+          success: false,
+          error: 'Error al extraer información del PDF',
+          numeroGuia: `${prefijo}-${numero}`,
+          transportadora: 'cootransmagdalena',
+          details: pdfError.message
+        };
+      }
+    } else {
+      // Si no es PDF, intentar como HTML
+      textContent = buffer.toString('utf8');
+    }
+
+    if (!textContent || textContent.length < 50) {
+      console.log('⚠️ Texto extraído vacío');
+      return {
+        success: false,
+        error: 'No se pudo extraer información del documento',
+        numeroGuia: `${prefijo}-${numero}`,
+        transportadora: 'cootransmagdalena'
+      };
+    }
+
+    // Extraer datos del texto
+    const datosCompletos = extraerDatosDesdeTextoCootransmagdalena(textContent, `${prefijo}-${numero}`);
+
+    console.log('📊 Datos extraídos:', JSON.stringify(datosCompletos, null, 2));
+
+    // Verificar si tiene datos válidos
+    if (!datosCompletos.estadoActual || datosCompletos.estadoActual === 'DESCONOCIDO') {
+      console.log('⚠️ No se encontraron datos válidos');
+      return {
+        success: false,
+        error: 'No se encontraron datos para esta guía',
+        numeroGuia: `${prefijo}-${numero}`,
+        transportadora: 'cootransmagdalena'
+      };
+    }
+
+    return {
+      success: true,
+      html: textContent,
+      numeroGuia: `${prefijo}-${numero}`,
+      transportadora: 'cootransmagdalena',
+      tipo: 'pdf',
+      url: reportUrl,
+      datos: datosCompletos
+    };
+
+  } catch (error) {
+    console.error('❌ Error Cootransmagdalena:', error.message);
+
+    if (error.code === 'ECONNABORTED') {
+      return {
+        success: false,
+        error: 'Tiempo de espera agotado al consultar Cootransmagdalena',
+        numeroGuia: numeroGuia.toString().trim(),
+        transportadora: 'cootransmagdalena'
+      };
+    }
+
+    if (error.response) {
+      return {
+        success: false,
+        error: `Error del servidor de Cootransmagdalena: ${error.response.status}`,
+        numeroGuia: numeroGuia.toString().trim(),
+        transportadora: 'cootransmagdalena'
+      };
+    }
+
+    return {
+      success: false,
+      error: 'Error al consultar la guía',
+      details: error.message,
+      numeroGuia: numeroGuia.toString().trim(),
+      transportadora: 'cootransmagdalena'
+    };
+  }
+}
+
+/**
+ * Extrae datos del texto extraído del PDF de Cootransmagdalena
+ */
+function extraerDatosDesdeTextoCootransmagdalena(texto, numeroGuia) {
+  const datos = {
+    numeroGuia: numeroGuia,
+    remitente: {
+      nombre: '',
+      cedula: '',
+      telefono: '',
+      direccion: ''
+    },
+    destinatario: {
+      nombre: '',
+      cedula: '',
+      telefono: '',
+      direccion: ''
+    },
+    origen: '',
+    destino: '',
+    agenciaDestino: '',
+    fecha: '',
+    tipo: '',
+    formaPago: '',
+    contiene: '',
+    valorAsegurado: '',
+    estadoActual: '',
+    historial: []
+  };
+
+  try {
+    console.log('🔍 Analizando texto Cootransmagdalena...');
+
+    const textoLimpio = texto.replace(/\r/g, '').trim();
+    
+    // Extraer FECHA
+    const fechaMatch = textoLimpio.match(/FECHA\s+(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/i);
+    if (fechaMatch) {
+      datos.fecha = fechaMatch[1];
+      console.log('✅ Fecha:', datos.fecha);
+    }
+
+    // Extraer NUMERO GUIA
+    const guiaMatch = textoLimpio.match(/NUMERO\s+GUIA\s+([A-Z]+-\d+)/i);
+    if (guiaMatch) {
+      datos.numeroGuia = guiaMatch[1];
+      console.log('✅ Guía confirmada:', datos.numeroGuia);
+    }
+
+    // Extraer ORIGEN / DESTINO
+    const origenDestinoMatch = textoLimpio.match(/ORIGEN\s*\/\s*DESTINO\s+([A-Z\s]+)\s*\/\s*([A-Z\s]+)/i);
+    if (origenDestinoMatch) {
+      datos.origen = origenDestinoMatch[1].trim();
+      datos.destino = origenDestinoMatch[2].trim();
+      console.log('✅ Origen:', datos.origen);
+      console.log('✅ Destino:', datos.destino);
+    }
+
+    // Extraer AGENCIA DESTINO
+    const agenciaMatch = textoLimpio.match(/AGENCIA\s+DESTINO\s+([A-Z\s]+)/i);
+    if (agenciaMatch) {
+      datos.agenciaDestino = agenciaMatch[1].trim();
+      console.log('✅ Agencia destino:', datos.agenciaDestino);
+    }
+
+    // Extraer TIPO
+    const tipoMatch = textoLimpio.match(/TIPO\s+([A-Z\s]+)/i);
+    if (tipoMatch) {
+      datos.tipo = tipoMatch[1].trim();
+    }
+
+    // Extraer FORMA PAGO
+    const pagoMatch = textoLimpio.match(/FORMA\s+PAGO\s+([A-Z\s]+)/i);
+    if (pagoMatch) {
+      datos.formaPago = pagoMatch[1].trim();
+    }
+
+    // Extraer CONTIENE
+    const contieneMatch = textoLimpio.match(/CONTIENE\s+(.+?)(?=VALOR|$)/is);
+    if (contieneMatch) {
+      datos.contiene = contieneMatch[1].replace(/\n/g, ' ').trim();
+    }
+
+    // Extraer VALOR ASEGURADO
+    const valorMatch = textoLimpio.match(/VALOR\s+ASEGURADO\s+\$?([\d,]+)/i);
+    if (valorMatch) {
+      datos.valorAsegurado = valorMatch[1];
+    }
+
+    // Extraer REMITENTE
+    const remitenteMatch = textoLimpio.match(/REMITENTE[^\n]*\n+NOMBRE\s+(.+?)\n+C\.C\s+(\d+)\s+TELEFONO\s+(\d+)\n+DIR\.\s+(.+?)(?=\n-)/is);
+    if (remitenteMatch) {
+      datos.remitente.nombre = remitenteMatch[1].trim();
+      datos.remitente.cedula = remitenteMatch[2].trim();
+      datos.remitente.telefono = remitenteMatch[3].trim();
+      datos.remitente.direccion = remitenteMatch[4].trim();
+      console.log('✅ Remitente:', datos.remitente.nombre);
+    }
+
+    // Extraer DESTINATARIO
+    const destinatarioMatch = textoLimpio.match(/DESTINATARIO[^\n]*\n+NOMBRE\s+(.+?)\n+C\.C\s+(\d+)\s+TELEFONO\s+(\d+)\n+DIR\.\s+(.+?)(?=\n\.|\n-)/is);
+    if (destinatarioMatch) {
+      datos.destinatario.nombre = destinatarioMatch[1].trim();
+      datos.destinatario.cedula = destinatarioMatch[2].trim();
+      datos.destinatario.telefono = destinatarioMatch[3].trim();
+      datos.destinatario.direccion = destinatarioMatch[4].trim();
+      console.log('✅ Destinatario:', datos.destinatario.nombre);
+    }
+
+    // Extraer TRAZABILIDAD (historial)
+    // Patrón: NÚMERO ESTADO : FECHA
+    const trazabilidadRegex = /(\d+)\s+([A-Z\s]+?)\s*:\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})/g;
+    let match;
+    
+    while ((match = trazabilidadRegex.exec(textoLimpio)) !== null) {
+      const numero = match[1].trim();
+      const estado = match[2].trim();
+      const fecha = match[3].trim();
+      
+      if (estado.length > 3) {
+        datos.historial.push({
+          numero: numero,
+          estado: estado,
+          fecha: fecha
+        });
+        console.log(`📝 Estado añadido: ${numero}. ${estado} - ${fecha}`);
+      }
+    }
+
+    // Organizar historial de Cootransmagdalena
+    datos.historial = organizarEstadosCootransmagdalena(datos.historial);
+
+    // El último estado es el actual
+    if (datos.historial.length > 0) {
+      const ultimoEstado = datos.historial[datos.historial.length - 1];
+      datos.estadoActual = ultimoEstado.estado;
+      
+      // Agregar información adicional
+      datos.estadoActualIcono = obtenerIconoEstadoCootrans(ultimoEstado.estado);
+      datos.estadoActualDescripcion = obtenerDescripcionEstadoCootrans(ultimoEstado.estado);
+      console.log(`✅ Estado actual: ${datos.estadoActual}`);
+    }
+
+    // Fallback
+    if (!datos.estadoActual || datos.estadoActual === '') {
+      datos.estadoActual = 'CONSULTADO';
+    }
+
+    console.log('✅ Extracción completada:', {
+      tieneEstado: !!datos.estadoActual,
+      cantidadHistorial: datos.historial.length,
+      tieneRemitente: !!datos.remitente.nombre,
+      tieneDestinatario: !!datos.destinatario.nombre
+    });
+
+  } catch (error) {
+    console.error('❌ Error al extraer datos:', error.message);
+    datos.estadoActual = 'ERROR EN EXTRACCIÓN';
+  }
+
+  return datos;
+}
+
+/**
+ * Organiza los estados de Cootransmagdalena
+ */
+function organizarEstadosCootransmagdalena(historial) {
+  const etapasImportantes = [
+    'GENERADA',
+    'EN BODEGA DE ORIGEN',
+    'ASIGNADA A VEHICULO',
+    'VIAJANDO',
+    'EN BODEGA INTERMEDIA',
+    'EN BODEGA DE DESTINO',
+    'SALIENDO A DISTRIBUIDOR',
+    'ENTREGADA'
+  ];
+
+  const normalizarEstado = (estado) => {
+    const estadoUpper = estado.toUpperCase().trim();
+    
+    if (estadoUpper.includes('GENERADA')) return 'GENERADA';
+    if (estadoUpper.includes('BODEGA DE ORIGEN') || estadoUpper.includes('BODEGA ORIGEN')) return 'EN BODEGA DE ORIGEN';
+    if (estadoUpper.includes('ASIGNADA') && estadoUpper.includes('VEHICULO')) return 'ASIGNADA A VEHICULO';
+    if (estadoUpper.includes('VIAJANDO')) return 'VIAJANDO';
+    if (estadoUpper.includes('BODEGA INTERMEDIA')) return 'EN BODEGA INTERMEDIA';
+    if (estadoUpper.includes('BODEGA DE DESTINO') || estadoUpper.includes('BODEGA DESTINO')) return 'EN BODEGA DE DESTINO';
+    if (estadoUpper.includes('SALIENDO') && estadoUpper.includes('DISTRIBUIDOR')) return 'SALIENDO A DISTRIBUIDOR';
+    if (estadoUpper.includes('ENTREGADA')) return 'ENTREGADA';
+    
+    return estadoUpper;
+  };
+
+  const historialFiltrado = [];
+  const estadosVistos = new Set();
+
+  for (const item of historial) {
+    const estadoNormalizado = normalizarEstado(item.estado);
+    
+    if (etapasImportantes.includes(estadoNormalizado) && !estadosVistos.has(estadoNormalizado)) {
+      historialFiltrado.push({
+        numero: item.numero,
+        estado: estadoNormalizado,
+        fecha: item.fecha
+      });
+      estadosVistos.add(estadoNormalizado);
+    }
+  }
+
+  return historialFiltrado;
+}
+
+/**
+ * Obtiene ícono para estados de Cootransmagdalena
+ */
+function obtenerIconoEstadoCootrans(estado) {
+  const iconos = {
+    'GENERADA': '📝',
+    'EN BODEGA DE ORIGEN': '📦',
+    'ASIGNADA A VEHICULO': '🚛',
+    'VIAJANDO': '🚚',
+    'EN BODEGA INTERMEDIA': '🏢',
+    'EN BODEGA DE DESTINO': '📍',
+    'SALIENDO A DISTRIBUIDOR': '🚐',
+    'ENTREGADA': '✅'
+  };
+  
+  return iconos[estado] || '📍';
+}
+
+/**
+ * Obtiene descripción para estados de Cootransmagdalena
+ */
+function obtenerDescripcionEstadoCootrans(estado) {
+  const descripciones = {
+    'GENERADA': 'Pedido generado en el sistema',
+    'EN BODEGA DE ORIGEN': 'En bodega de origen',
+    'ASIGNADA A VEHICULO': 'Asignada a vehículo',
+    'VIAJANDO': 'En ruta hacia destino',
+    'EN BODEGA INTERMEDIA': 'En bodega intermedia',
+    'EN BODEGA DE DESTINO': 'Llegó a bodega de destino',
+    'SALIENDO A DISTRIBUIDOR': 'En reparto local',
+    'ENTREGADA': 'Entregada exitosamente'
+  };
+  
+  return descripciones[estado] || estado;
+}
 
 module.exports = {
   rastrearGuiaCopetran,
   rastrearGuiaTransmoralar,
+  rastrearGuiaCootransmagdalena, // ✅ Nueva
   organizarEstadosTransmoralar,
+  organizarEstadosCootransmagdalena, // ✅ Nueva
   obtenerIconoEstado,
   obtenerDescripcionEstado,
-  extraerDatosDesdeTextoTransmoralar
+  obtenerIconoEstadoCootrans, // ✅ Nueva
+  obtenerDescripcionEstadoCootrans, // ✅ Nueva
+  extraerDatosDesdeTextoTransmoralar,
+  extraerDatosDesdeTextoCootransmagdalena // ✅ Nueva
 };

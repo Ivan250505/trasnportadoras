@@ -43,10 +43,14 @@ async function rastrearGuia(req, res) {
         resultado = await rastrearGuiaTransmoralar(numeroGuia);
         break;
       
+      case 'cootransmagdalena':
+        resultado = await rastrearGuiaCootransmagdalena(numeroGuia);
+        break;
+      
       default:
         return res.status(400).json({
           error: 'Transportadora no soportada',
-          transportadorasDisponibles: ['copetran', 'transmoralar']
+          transportadorasDisponibles: ['copetran', 'transmoralar', 'cootransmagdalena']
         });
     }
 
