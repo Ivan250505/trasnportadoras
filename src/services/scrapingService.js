@@ -538,39 +538,54 @@ function extraerDatosDesdeTextoTransmoralar(texto, numeroGuia) {
       console.log('✅ Guía encontrada:', datos.numeroGuia);
     }
 
-    // ✅ Extraer REMITENTE - Nombre (después de "Datos remitente" y "Nombre:")
-    const remitenteNombreMatch = textoLimpio.match(/Datos\s+remitente.*?Nombre:\s*([^\n]+)/is);
-    if (remitenteNombreMatch) {
-      datos.remitente.nombre = remitenteNombreMatch[1].trim();
-      console.log('✅ Remitente nombre:', datos.remitente.nombre);
-    }
-
-    // ✅ Extraer ORIGEN (después de "Origen :" hasta el siguiente campo)
-    const origenMatch = textoLimpio.match(/Origen\s*:\s*([^\n]+?)(?=Destino:|Unidad:|Nombre:|$)/is);
-    if (origenMatch) {
-      datos.remitente.origen = origenMatch[1].trim();
-      console.log('✅ Origen:', datos.remitente.origen);
-    }
-
-    // ✅ Extraer DESTINATARIO - Nombre (después de "Datos destinatario" y "Nombre:")
-    const destinatarioNombreMatch = textoLimpio.match(/Datos\s+destinatario.*?Nombre:\s*([^\n]+)/is);
-    if (destinatarioNombreMatch) {
-      datos.destinatario.nombre = destinatarioNombreMatch[1].trim();
-      console.log('✅ Destinatario nombre:', datos.destinatario.nombre);
-    }
-
-    // ✅ Extraer DESTINO
-    const destinoMatch = textoLimpio.match(/Destino\s*:\s*([^\n]+?)(?=Unidad:|Nombre:|$)/is);
-    if (destinoMatch) {
-      datos.destinatario.destino = destinoMatch[1].trim();
-      console.log('✅ Destino:', datos.destinatario.destino);
-    }
-
-    // ✅ Extraer UNIDAD
-    const unidadMatch = textoLimpio.match(/Unidad\s*:\s*([^\n]+?)(?=Nombre:|$)/is);
-    if (unidadMatch) {
-      datos.destinatario.unidad = unidadMatch[1].trim();
-      console.log('✅ Unidad:', datos.destinatario.unidad);
+    // ✅ Estrategia: Dividir el texto en líneas y buscar patrones
+    const lineas = textoLimpio.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    let origenEncontrado = false;
+    let destinoEncontrado = false;
+    let remitenteEncontrado = false;
+    
+    for (let i = 0; i < lineas.length; i++) {
+      const linea = lineas[i];
+      
+      // Buscar ORIGEN (dirección con paréntesis tipo "BUCARAMANGA(CRA...)")
+      if (!origenEncontrado && /^[A-Z]+\([A-Z0-9\s#-]+\)$/i.test(linea)) {
+        datos.remitente.origen = linea;
+        origenEncontrado = true;
+        console.log('✅ Origen encontrado:', linea);
+        continue;
+      }
+      
+      // Buscar DESTINO (segunda dirección con paréntesis)
+      if (origenEncontrado && !destinoEncontrado && /^[A-Z]+\([A-Z0-9\s#-]+\)$/i.test(linea)) {
+        datos.destinatario.destino = linea;
+        destinoEncontrado = true;
+        console.log('✅ Destino encontrado:', linea);
+        continue;
+      }
+      
+      // Buscar REMITENTE (línea con "SAS" o empresa después del origen)
+      if (origenEncontrado && !remitenteEncontrado && /SAS|S\.A\.|LTDA|E\.U\./i.test(linea) && linea.length > 5) {
+        datos.remitente.nombre = linea;
+        remitenteEncontrado = true;
+        console.log('✅ Remitente encontrado:', linea);
+        continue;
+      }
+      
+      // Buscar UNIDAD (número simple después de destino)
+      if (destinoEncontrado && !datos.destinatario.unidad && /^\d+$/.test(linea)) {
+        datos.destinatario.unidad = linea;
+        console.log('✅ Unidad encontrada:', linea);
+        continue;
+      }
+      
+      // Buscar DESTINATARIO (empresa después de unidad - DROGUERÍA, FARMACIA, etc)
+      if (datos.destinatario.unidad && !datos.destinatario.nombre && 
+          /DROGUERÍA|FARMACIA|DROGUERIA/i.test(linea) && linea.length > 5) {
+        datos.destinatario.nombre = linea;
+        console.log('✅ Destinatario encontrado:', linea);
+        break; // Ya tenemos todos los datos principales
+      }
     }
 
     // ✅ Extraer HISTORIAL completo
