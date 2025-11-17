@@ -1,6 +1,15 @@
 const axios = require('axios');
 const cheerio = require('cheerio');
-const pdf = require('pdf-parse'); // Importación corregida
+// Importación robusta de pdf-parse
+let pdfParse;
+try {
+  pdfParse = require('pdf-parse');
+  if (typeof pdfParse !== 'function' && pdfParse.default) {
+    pdfParse = pdfParse.default;
+  }
+} catch (err) {
+  console.error('Error al importar pdf-parse:', err);
+}
 const { SCRAPING_TIMEOUT } = require('../config/env');
 
 /**
@@ -162,7 +171,7 @@ async function rastrearGuiaTransmoralar(numeroGuia) {
     if (isPDF) {
       // Parsear el PDF y extraer texto
       console.log('📖 Extrayendo texto del PDF...');
-      const pdfData = await pdf(buffer); // Llamada corregida
+      const pdfData = await pdfParse(buffer); // Usar pdfParse
       textContent = pdfData.text;
       console.log(`✅ Texto extraído: ${textContent.length} caracteres`);
     } else {
