@@ -267,14 +267,15 @@ function organizarEstadosTransmoralar(historial) {
     const estadoUpper = estado.toUpperCase().trim();
     
     // Mapear variaciones al nombre estándar
+    // ✅ IMPORTANTE: Verificar "SIN CÑUMPLIDO" ANTES de solo "ENTREGADA"
     if (estadoUpper.includes('DIGIT')) return 'DIGITADA';
     if (estadoUpper.includes('BODEGA') && estadoUpper.includes('GIRON')) return 'GIRON BODEGA';
     if (estadoUpper.includes('BODEGA')) return 'EN BODEGA';
     if (estadoUpper.includes('CARGADA') && estadoUpper.includes('VEHICULO')) return 'CARGADA EN VEHICULO';
     if (estadoUpper.includes('TRANSPORTE NACIONAL')) return 'EN TRANSPORTE NACIONAL';
     if (estadoUpper.includes('TRANSPORTE URBANO')) return 'EN TRANSPORTE URBANO';
-    if (estadoUpper.includes('ENTREGADA SIN CUMPLIDO')) return 'ENTREGADA SIN CUMPLIDO';
-    if (estadoUpper.includes('ENTREGADA')) return 'ENTREGADA';
+    if (estadoUpper.includes('SIN CUMPLIDO') || estadoUpper.includes('ENTREGADA SIN CUMPLIDO')) return 'ENTREGADA SIN CUMPLIDO'; // ✅ PRIMERO
+    if (estadoUpper.includes('ENTREGADA')) return 'ENTREGADA'; // ✅ DESPUÉS
     
     return estadoUpper;
   };
@@ -299,7 +300,6 @@ function organizarEstadosTransmoralar(historial) {
 
   return historialFiltrado;
 }
-
 /**
  * Obtiene un ícono representativo para cada estado
  */
